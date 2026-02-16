@@ -25,7 +25,11 @@ app.get("/", (req, res) => {
   res.json({
     ok: true,
     message: "Gastos API running",
-    endpoints: ["/health", "/categories", "/expenses"],
+    endpoints: [
+      "/health",
+      "/categories (GET/POST/PUT/DELETE)",
+      "/expenses (GET/POST/PUT/DELETE)",
+    ],
   });
 });
 
@@ -38,6 +42,10 @@ app.get("/health", async (req, res) => {
     res.status(500).json({ ok: false, db: "error", message: err.message });
   }
 });
+
+// =========================
+// CATEGORIES
+// =========================
 
 // listar categorias
 app.get("/categories", async (req, res) => {
@@ -69,6 +77,60 @@ app.post("/categories", async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
+
+// ✅ editar categoria (cambiar nombre)
+app.put("/categories/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { name } = req.body;
+
+    if (!id) return res.status(400).json({ message: "id inválido" });
+    if (!name?.trim()) return res.status(400).json({ message: "name requerido" });
+
+    const [result] = await pool.query(
+      "UPDATE categories SET name=? WHERE id=? AND user_id=?",
+      [name.trim(), id, USER_ID]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Categoría no encontrada" });
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ✅ borrar categoria
+app.delete("/categories/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ message: "id inválido" });
+
+    const [result] = await pool.query(
+      "DELETE FROM categories WHERE id=? AND user_id=?",
+      [id, USER_ID]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Categoría no encontrada" });
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    // si falla por FK (hay gastos usando esa categoría)
+    res.status(500).json({
+      message:
+        "No se pudo borrar la categoría. Asegúrate de borrar primero los gastos de esa categoría.",
+      detail: err.message,
+    });
+  }
+});
+
+// =========================
+// EXPENSES
+// =========================
 
 // listar gastos (opcional from/to)
 app.get("/expenses", async (req, res) => {
@@ -120,6 +182,58 @@ app.post("/expenses", async (req, res) => {
     );
 
     res.status(201).json({ id: result.insertId });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ✅ editar gasto
+app.put("/expenses/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ message: "id inválido" });
+
+    const { category_id, amount, expense_date, note } = req.body;
+
+    if (!category_id || !amount || !expense_date) {
+      return res
+        .status(400)
+        .json({ message: "category_id, amount y expense_date requeridos" });
+    }
+
+    const [result] = await pool.query(
+      `UPDATE expenses
+       SET category_id=?, amount=?, expense_date=?, note=?
+       WHERE id=? AND user_id=?`,
+      [category_id, amount, expense_date, note || null, id, USER_ID]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Gasto no encontrado" });
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ✅ borrar gasto
+app.delete("/expenses/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ message: "id inválido" });
+
+    const [result] = await pool.query(
+      "DELETE FROM expenses WHERE id=? AND user_id=?",
+      [id, USER_ID]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Gasto no encontrado" });
+    }
+
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
