@@ -18,6 +18,9 @@ app.use(
   })
 );
 
+// ✅ (AGREGADO) Responder preflight OPTIONS para Authorization (muy importante en navegador)
+app.options("*", cors());
+
 app.use(express.json());
 
 // ✅ LOG SIMPLE (para debug en Railway)
@@ -45,6 +48,23 @@ function auth(req, res, next) {
   }
 }
 
+// ✅ (AGREGADO) crear categorías iniciales para usuario nuevo
+async function ensureDefaultCategories(userId) {
+  const [rows] = await pool.query(
+    "SELECT id FROM categories WHERE user_id=? LIMIT 1",
+    [userId]
+  );
+  if (rows.length) return;
+
+  const defaults = ["Comida", "Transporte", "Entretenimiento", "Hogar"];
+  const values = defaults.map((name) => [userId, name]);
+
+  await pool.query(
+    "INSERT INTO categories (user_id, name) VALUES ?",
+    [values]
+  );
+}
+
 // ✅ Ruta raíz
 app.get("/", (_req, res) => {
   res.json({
@@ -54,6 +74,7 @@ app.get("/", (_req, res) => {
       "/health",
       "/auth/register (POST)",
       "/auth/login (POST)",
+      "/me (GET) [AUTH]",
       "/categories (GET/POST/PUT/DELETE) [AUTH]",
       "/expenses (GET/POST/PUT/DELETE) [AUTH]",
     ],
@@ -91,6 +112,11 @@ app.get("/auth/login", (_req, res) => {
   });
 });
 
+// ✅ (AGREGADO) endpoint para comprobar sesión desde el frontend
+app.get("/me", auth, async (req, res) => {
+  res.json({ ok: true, user: req.user });
+});
+
 // ✅ Registro
 app.post("/auth/register", async (req, res) => {
   try {
@@ -100,9 +126,11 @@ app.post("/auth/register", async (req, res) => {
       return res.status(400).json({ message: "email y password requeridos" });
     }
 
+    const cleanEmail = email.trim().toLowerCase();
+
     // revisa si ya existe
     const [exists] = await pool.query("SELECT id FROM users WHERE email=?", [
-      email.trim(),
+      cleanEmail,
     ]);
     if (exists.length) {
       return res.status(409).json({ message: "Ese email ya está registrado" });
@@ -111,15 +139,18 @@ app.post("/auth/register", async (req, res) => {
     // hash
     const hash = await bcrypt.hash(password, 10);
 
-    // ✅ crear user (columna correcta)
+    // ✅ crear user
     const [result] = await pool.query(
       "INSERT INTO users (email, password_hash) VALUES (?, ?)",
-      [email.trim(), hash]
+      [cleanEmail, hash]
     );
+
+    // ✅ (AGREGADO) crea categorías por defecto
+    await ensureDefaultCategories(result.insertId);
 
     // token
     const token = jwt.sign(
-      { id: result.insertId, email: email.trim() },
+      { id: result.insertId, email: cleanEmail },
       JWT_SECRET,
       { expiresIn: "7d" }
     );
@@ -140,9 +171,11 @@ app.post("/auth/login", async (req, res) => {
       return res.status(400).json({ message: "email y password requeridos" });
     }
 
+    const cleanEmail = email.trim().toLowerCase();
+
     const [rows] = await pool.query(
       "SELECT id, email, password_hash FROM users WHERE email=?",
-      [email.trim()]
+      [cleanEmail]
     );
 
     if (!rows.length) {
@@ -155,6 +188,9 @@ app.post("/auth/login", async (req, res) => {
     if (!ok) {
       return res.status(401).json({ message: "Credenciales incorrectas" });
     }
+
+    // ✅ (AGREGADO) si el usuario no tiene categorías, créalas
+    await ensureDefaultCategories(user.id);
 
     const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, {
       expiresIn: "7d",
@@ -171,7 +207,6 @@ app.post("/auth/login", async (req, res) => {
 // CATEGORIES (AUTH)
 // =========================
 
-// listar categorias
 app.get("/categories", auth, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -185,7 +220,6 @@ app.get("/categories", auth, async (req, res) => {
   }
 });
 
-// crear categoria
 app.post("/categories", auth, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -206,7 +240,6 @@ app.post("/categories", auth, async (req, res) => {
   }
 });
 
-// editar categoria
 app.put("/categories/:id", auth, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -231,7 +264,6 @@ app.put("/categories/:id", auth, async (req, res) => {
   }
 });
 
-// borrar categoria
 app.delete("/categories/:id", auth, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -261,7 +293,6 @@ app.delete("/categories/:id", auth, async (req, res) => {
 // EXPENSES (AUTH)
 // =========================
 
-// listar gastos
 app.get("/expenses", auth, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -288,7 +319,6 @@ app.get("/expenses", auth, async (req, res) => {
   }
 });
 
-// crear gasto
 app.post("/expenses", auth, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -321,7 +351,6 @@ app.post("/expenses", auth, async (req, res) => {
   }
 });
 
-// editar gasto
 app.put("/expenses/:id", auth, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -361,7 +390,6 @@ app.put("/expenses/:id", auth, async (req, res) => {
   }
 });
 
-// borrar gasto
 app.delete("/expenses/:id", auth, async (req, res) => {
   try {
     const userId = req.user.id;
