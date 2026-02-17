@@ -51,6 +51,8 @@ app.get("/", (req, res) => {
       "/categories (GET/POST/PUT/DELETE) [AUTH]",
       "/expenses (GET/POST/PUT/DELETE) [AUTH]",
     ],
+    note:
+      "IMPORTANTE: /auth/register y /auth/login son POST. Si los abres en el navegador es GET y puede salir Not Found.",
   });
 });
 
@@ -68,21 +70,19 @@ app.get("/health", async (req, res) => {
 // AUTH
 // =========================
 
-// ✅ (AGREGADO) INFO: si abres en navegador /auth/register con GET
+// ✅ (AGREGADO) Si abres /auth/register en el navegador, te explica que es POST
 app.get("/auth/register", (req, res) => {
   res.json({
     ok: true,
-    message: "Usa POST /auth/register",
-    body_example: { email: "demo@demo.com", password: "123456" },
+    message: "Usa POST /auth/register con JSON { email, password }",
   });
 });
 
-// ✅ (AGREGADO) INFO: si abres en navegador /auth/login con GET
+// ✅ (AGREGADO) Si abres /auth/login en el navegador, te explica que es POST
 app.get("/auth/login", (req, res) => {
   res.json({
     ok: true,
-    message: "Usa POST /auth/login",
-    body_example: { email: "demo@demo.com", password: "123456" },
+    message: "Usa POST /auth/login con JSON { email, password }",
   });
 });
 
