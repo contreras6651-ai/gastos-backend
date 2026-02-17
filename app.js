@@ -68,6 +68,24 @@ app.get("/health", async (req, res) => {
 // AUTH
 // =========================
 
+// ✅ (AGREGADO) INFO: si abres en navegador /auth/register con GET
+app.get("/auth/register", (req, res) => {
+  res.json({
+    ok: true,
+    message: "Usa POST /auth/register",
+    body_example: { email: "demo@demo.com", password: "123456" },
+  });
+});
+
+// ✅ (AGREGADO) INFO: si abres en navegador /auth/login con GET
+app.get("/auth/login", (req, res) => {
+  res.json({
+    ok: true,
+    message: "Usa POST /auth/login",
+    body_example: { email: "demo@demo.com", password: "123456" },
+  });
+});
+
 // ✅ Registro
 app.post("/auth/register", async (req, res) => {
   try {
