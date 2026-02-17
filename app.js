@@ -18,12 +18,12 @@ app.use(
   })
 );
 
-// ✅ (CORREGIDO) Responder preflight OPTIONS (Express 5 NO acepta "*")
+// ✅ Preflight OPTIONS (Express 5)
 app.options(/.*/, cors());
 
 app.use(express.json());
 
-// ✅ LOG SIMPLE (para debug en Railway)
+// ✅ LOG SIMPLE (debug en Railway)
 app.use((req, _res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
@@ -48,7 +48,7 @@ function auth(req, res, next) {
   }
 }
 
-// ✅ (AGREGADO) crear categorías iniciales para usuario nuevo
+// ✅ Crear categorías iniciales para usuario nuevo
 async function ensureDefaultCategories(userId) {
   const [rows] = await pool.query(
     "SELECT id FROM categories WHERE user_id=? LIMIT 1",
@@ -59,6 +59,7 @@ async function ensureDefaultCategories(userId) {
   const defaults = ["Comida", "Transporte", "Entretenimiento", "Hogar"];
   const values = defaults.map((name) => [userId, name]);
 
+  // INSERT multiple rows
   await pool.query("INSERT INTO categories (user_id, name) VALUES ?", [values]);
 }
 
@@ -109,7 +110,7 @@ app.get("/auth/login", (_req, res) => {
   });
 });
 
-// ✅ endpoint para comprobar sesión desde el frontend
+// ✅ comprobar sesión
 app.get("/me", auth, async (req, res) => {
   res.json({ ok: true, user: req.user });
 });
@@ -125,7 +126,7 @@ app.post("/auth/register", async (req, res) => {
 
     const cleanEmail = email.trim().toLowerCase();
 
-    // revisa si ya existe
+    // ¿ya existe?
     const [exists] = await pool.query("SELECT id FROM users WHERE email=?", [
       cleanEmail,
     ]);
@@ -136,13 +137,13 @@ app.post("/auth/register", async (req, res) => {
     // hash
     const hash = await bcrypt.hash(password, 10);
 
-    // crear user
+    // crear user (columna correcta)
     const [result] = await pool.query(
       "INSERT INTO users (email, password_hash) VALUES (?, ?)",
       [cleanEmail, hash]
     );
 
-    // crea categorías por defecto
+    // categorías por defecto
     await ensureDefaultCategories(result.insertId);
 
     // token
@@ -186,7 +187,7 @@ app.post("/auth/login", async (req, res) => {
       return res.status(401).json({ message: "Credenciales incorrectas" });
     }
 
-    // si el usuario no tiene categorías, créalas
+    // si no tiene categorías, créalas
     await ensureDefaultCategories(user.id);
 
     const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, {
@@ -369,6 +370,7 @@ app.put("/expenses/:id", auth, async (req, res) => {
         .json({ message: "category_id, amount y expense_date requeridos" });
     }
 
+    // asegura categoría del usuario
     const [cat] = await pool.query(
       "SELECT id FROM categories WHERE id=? AND user_id=?",
       [category_id, userId]
