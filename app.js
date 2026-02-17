@@ -1,16 +1,18 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import jwt from "jsonwebtoken";
+import bcrypt from "bcrypt";
 import { pool } from "./db.js";
 
 dotenv.config();
 
 const app = express();
 
-// ✅ CORS (no rompe lo que ya tienes, pero evita problemas con la web)
+// ✅ CORS
 app.use(
   cors({
-    origin: "*", // si luego quieres restringir, aquí se cambia
+    origin: "*",
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
@@ -18,17 +20,36 @@ app.use(
 
 app.use(express.json());
 
-const USER_ID = 1; // modo demo mientras no haya login
+// ✅ JWT SECRET (ponlo en Railway Variables)
+const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change_me";
 
-// ✅ ruta raíz para que tu dominio no muestre "Not Found"
+// ✅ Middleware de autenticación
+function auth(req, res, next) {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+
+  if (!token) return res.status(401).json({ message: "Token requerido" });
+
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.user = { id: payload.id, email: payload.email };
+    next();
+  } catch (err) {
+    return res.status(401).json({ message: "Token inválido" });
+  }
+}
+
+// ✅ Ruta raíz
 app.get("/", (req, res) => {
   res.json({
     ok: true,
     message: "Gastos API running",
     endpoints: [
       "/health",
-      "/categories (GET/POST/PUT/DELETE)",
-      "/expenses (GET/POST/PUT/DELETE)",
+      "/auth/register (POST)",
+      "/auth/login (POST)",
+      "/categories (GET/POST/PUT/DELETE) [AUTH]",
+      "/expenses (GET/POST/PUT/DELETE) [AUTH]",
     ],
   });
 });
@@ -44,15 +65,95 @@ app.get("/health", async (req, res) => {
 });
 
 // =========================
-// CATEGORIES
+// AUTH
+// =========================
+
+// ✅ Registro
+app.post("/auth/register", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email?.trim() || !password?.trim()) {
+      return res.status(400).json({ message: "email y password requeridos" });
+    }
+
+    // revisa si ya existe
+    const [exists] = await pool.query("SELECT id FROM users WHERE email=?", [
+      email.trim(),
+    ]);
+
+    if (exists.length) {
+      return res.status(409).json({ message: "Ese email ya está registrado" });
+    }
+
+    // hash
+    const hash = await bcrypt.hash(password, 10);
+
+    // crear user
+    const [result] = await pool.query(
+      "INSERT INTO users (email, password) VALUES (?, ?)",
+      [email.trim(), hash]
+    );
+
+    // token
+    const token = jwt.sign(
+      { id: result.insertId, email: email.trim() },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    res.status(201).json({ ok: true, token });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ✅ Login
+app.post("/auth/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email?.trim() || !password?.trim()) {
+      return res.status(400).json({ message: "email y password requeridos" });
+    }
+
+    const [rows] = await pool.query(
+      "SELECT id, email, password FROM users WHERE email=?",
+      [email.trim()]
+    );
+
+    if (!rows.length) {
+      return res.status(401).json({ message: "Credenciales incorrectas" });
+    }
+
+    const user = rows[0];
+    const ok = await bcrypt.compare(password, user.password);
+
+    if (!ok) {
+      return res.status(401).json({ message: "Credenciales incorrectas" });
+    }
+
+    const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, {
+      expiresIn: "7d",
+    });
+
+    res.json({ ok: true, token });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// =========================
+// CATEGORIES (AUTH)
 // =========================
 
 // listar categorias
-app.get("/categories", async (req, res) => {
+app.get("/categories", auth, async (req, res) => {
   try {
+    const userId = req.user.id;
     const [rows] = await pool.query(
       "SELECT id, name FROM categories WHERE user_id=? ORDER BY name",
-      [USER_ID]
+      [userId]
     );
     res.json(rows);
   } catch (err) {
@@ -61,15 +162,17 @@ app.get("/categories", async (req, res) => {
 });
 
 // crear categoria
-app.post("/categories", async (req, res) => {
+app.post("/categories", auth, async (req, res) => {
   try {
+    const userId = req.user.id;
     const { name } = req.body;
+
     if (!name?.trim())
       return res.status(400).json({ message: "name requerido" });
 
     const [result] = await pool.query(
       "INSERT INTO categories (user_id, name) VALUES (?, ?)",
-      [USER_ID, name.trim()]
+      [userId, name.trim()]
     );
 
     res.status(201).json({ id: result.insertId, name: name.trim() });
@@ -78,18 +181,20 @@ app.post("/categories", async (req, res) => {
   }
 });
 
-// ✅ editar categoria (cambiar nombre)
-app.put("/categories/:id", async (req, res) => {
+// editar categoria
+app.put("/categories/:id", auth, async (req, res) => {
   try {
+    const userId = req.user.id;
     const id = Number(req.params.id);
     const { name } = req.body;
 
     if (!id) return res.status(400).json({ message: "id inválido" });
-    if (!name?.trim()) return res.status(400).json({ message: "name requerido" });
+    if (!name?.trim())
+      return res.status(400).json({ message: "name requerido" });
 
     const [result] = await pool.query(
       "UPDATE categories SET name=? WHERE id=? AND user_id=?",
-      [name.trim(), id, USER_ID]
+      [name.trim(), id, userId]
     );
 
     if (result.affectedRows === 0) {
@@ -102,15 +207,16 @@ app.put("/categories/:id", async (req, res) => {
   }
 });
 
-// ✅ borrar categoria
-app.delete("/categories/:id", async (req, res) => {
+// borrar categoria
+app.delete("/categories/:id", auth, async (req, res) => {
   try {
+    const userId = req.user.id;
     const id = Number(req.params.id);
     if (!id) return res.status(400).json({ message: "id inválido" });
 
     const [result] = await pool.query(
       "DELETE FROM categories WHERE id=? AND user_id=?",
-      [id, USER_ID]
+      [id, userId]
     );
 
     if (result.affectedRows === 0) {
@@ -119,22 +225,22 @@ app.delete("/categories/:id", async (req, res) => {
 
     res.json({ ok: true });
   } catch (err) {
-    // si falla por FK (hay gastos usando esa categoría)
     res.status(500).json({
       message:
-        "No se pudo borrar la categoría. Asegúrate de borrar primero los gastos de esa categoría.",
+        "No se pudo borrar la categoría. Borra primero los gastos de esa categoría.",
       detail: err.message,
     });
   }
 });
 
 // =========================
-// EXPENSES
+// EXPENSES (AUTH)
 // =========================
 
 // listar gastos (opcional from/to)
-app.get("/expenses", async (req, res) => {
+app.get("/expenses", auth, async (req, res) => {
   try {
+    const userId = req.user.id;
     const { from, to } = req.query;
 
     let sql = `
@@ -144,7 +250,7 @@ app.get("/expenses", async (req, res) => {
       JOIN categories c ON c.id = e.category_id
       WHERE e.user_id = ?
     `;
-    const params = [USER_ID];
+    const params = [userId];
 
     if (from) {
       sql += " AND e.expense_date >= ?";
@@ -165,8 +271,9 @@ app.get("/expenses", async (req, res) => {
 });
 
 // crear gasto
-app.post("/expenses", async (req, res) => {
+app.post("/expenses", auth, async (req, res) => {
   try {
+    const userId = req.user.id;
     const { category_id, amount, expense_date, note } = req.body;
 
     if (!category_id || !amount || !expense_date) {
@@ -178,7 +285,7 @@ app.post("/expenses", async (req, res) => {
     const [result] = await pool.query(
       `INSERT INTO expenses (user_id, category_id, amount, expense_date, note)
        VALUES (?, ?, ?, ?, ?)`,
-      [USER_ID, category_id, amount, expense_date, note || null]
+      [userId, category_id, amount, expense_date, note || null]
     );
 
     res.status(201).json({ id: result.insertId });
@@ -187,9 +294,10 @@ app.post("/expenses", async (req, res) => {
   }
 });
 
-// ✅ editar gasto
-app.put("/expenses/:id", async (req, res) => {
+// editar gasto
+app.put("/expenses/:id", auth, async (req, res) => {
   try {
+    const userId = req.user.id;
     const id = Number(req.params.id);
     if (!id) return res.status(400).json({ message: "id inválido" });
 
@@ -205,7 +313,7 @@ app.put("/expenses/:id", async (req, res) => {
       `UPDATE expenses
        SET category_id=?, amount=?, expense_date=?, note=?
        WHERE id=? AND user_id=?`,
-      [category_id, amount, expense_date, note || null, id, USER_ID]
+      [category_id, amount, expense_date, note || null, id, userId]
     );
 
     if (result.affectedRows === 0) {
@@ -218,15 +326,16 @@ app.put("/expenses/:id", async (req, res) => {
   }
 });
 
-// ✅ borrar gasto
-app.delete("/expenses/:id", async (req, res) => {
+// borrar gasto
+app.delete("/expenses/:id", auth, async (req, res) => {
   try {
+    const userId = req.user.id;
     const id = Number(req.params.id);
     if (!id) return res.status(400).json({ message: "id inválido" });
 
     const [result] = await pool.query(
       "DELETE FROM expenses WHERE id=? AND user_id=?",
-      [id, USER_ID]
+      [id, userId]
     );
 
     if (result.affectedRows === 0) {
@@ -239,7 +348,7 @@ app.delete("/expenses/:id", async (req, res) => {
   }
 });
 
-// ✅ 404 en JSON (si alguien entra a una ruta que no existe)
+// 404
 app.use((req, res) => {
   res.status(404).json({ message: "Not Found" });
 });
