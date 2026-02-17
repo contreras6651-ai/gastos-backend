@@ -18,8 +18,8 @@ app.use(
   })
 );
 
-// ✅ (AGREGADO) Responder preflight OPTIONS para Authorization (muy importante en navegador)
-app.options("*", cors());
+// ✅ (CORREGIDO) Responder preflight OPTIONS (Express 5 NO acepta "*")
+app.options(/.*/, cors());
 
 app.use(express.json());
 
@@ -59,10 +59,7 @@ async function ensureDefaultCategories(userId) {
   const defaults = ["Comida", "Transporte", "Entretenimiento", "Hogar"];
   const values = defaults.map((name) => [userId, name]);
 
-  await pool.query(
-    "INSERT INTO categories (user_id, name) VALUES ?",
-    [values]
-  );
+  await pool.query("INSERT INTO categories (user_id, name) VALUES ?", [values]);
 }
 
 // ✅ Ruta raíz
@@ -112,7 +109,7 @@ app.get("/auth/login", (_req, res) => {
   });
 });
 
-// ✅ (AGREGADO) endpoint para comprobar sesión desde el frontend
+// ✅ endpoint para comprobar sesión desde el frontend
 app.get("/me", auth, async (req, res) => {
   res.json({ ok: true, user: req.user });
 });
@@ -139,13 +136,13 @@ app.post("/auth/register", async (req, res) => {
     // hash
     const hash = await bcrypt.hash(password, 10);
 
-    // ✅ crear user
+    // crear user
     const [result] = await pool.query(
       "INSERT INTO users (email, password_hash) VALUES (?, ?)",
       [cleanEmail, hash]
     );
 
-    // ✅ (AGREGADO) crea categorías por defecto
+    // crea categorías por defecto
     await ensureDefaultCategories(result.insertId);
 
     // token
@@ -189,7 +186,7 @@ app.post("/auth/login", async (req, res) => {
       return res.status(401).json({ message: "Credenciales incorrectas" });
     }
 
-    // ✅ (AGREGADO) si el usuario no tiene categorías, créalas
+    // si el usuario no tiene categorías, créalas
     await ensureDefaultCategories(user.id);
 
     const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, {
@@ -247,7 +244,8 @@ app.put("/categories/:id", auth, async (req, res) => {
     const { name } = req.body;
 
     if (!id) return res.status(400).json({ message: "id inválido" });
-    if (!name?.trim()) return res.status(400).json({ message: "name requerido" });
+    if (!name?.trim())
+      return res.status(400).json({ message: "name requerido" });
 
     const [result] = await pool.query(
       "UPDATE categories SET name=? WHERE id=? AND user_id=?",
@@ -307,8 +305,14 @@ app.get("/expenses", auth, async (req, res) => {
     `;
     const params = [userId];
 
-    if (from) { sql += " AND e.expense_date >= ?"; params.push(from); }
-    if (to)   { sql += " AND e.expense_date <= ?"; params.push(to); }
+    if (from) {
+      sql += " AND e.expense_date >= ?";
+      params.push(from);
+    }
+    if (to) {
+      sql += " AND e.expense_date <= ?";
+      params.push(to);
+    }
 
     sql += " ORDER BY e.expense_date DESC, e.id DESC";
 
