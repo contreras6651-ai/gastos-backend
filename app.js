@@ -89,9 +89,9 @@ app.post("/auth/register", async (req, res) => {
     // hash
     const hash = await bcrypt.hash(password, 10);
 
-    // crear user
+    // ✅ crear user (OJO: tu columna es password_hash)
     const [result] = await pool.query(
-      "INSERT INTO users (email, password) VALUES (?, ?)",
+      "INSERT INTO users (email, password_hash) VALUES (?, ?)",
       [email.trim(), hash]
     );
 
@@ -117,8 +117,9 @@ app.post("/auth/login", async (req, res) => {
       return res.status(400).json({ message: "email y password requeridos" });
     }
 
+    // ✅ leer password_hash (no password)
     const [rows] = await pool.query(
-      "SELECT id, email, password FROM users WHERE email=?",
+      "SELECT id, email, password_hash FROM users WHERE email=?",
       [email.trim()]
     );
 
@@ -127,7 +128,7 @@ app.post("/auth/login", async (req, res) => {
     }
 
     const user = rows[0];
-    const ok = await bcrypt.compare(password, user.password);
+    const ok = await bcrypt.compare(password, user.password_hash);
 
     if (!ok) {
       return res.status(401).json({ message: "Credenciales incorrectas" });
@@ -282,6 +283,15 @@ app.post("/expenses", auth, async (req, res) => {
         .json({ message: "category_id, amount y expense_date requeridos" });
     }
 
+    // ✅ asegura que esa categoría sea del usuario (evita errores FK)
+    const [cat] = await pool.query(
+      "SELECT id FROM categories WHERE id=? AND user_id=?",
+      [category_id, userId]
+    );
+    if (!cat.length) {
+      return res.status(400).json({ message: "Categoría inválida" });
+    }
+
     const [result] = await pool.query(
       `INSERT INTO expenses (user_id, category_id, amount, expense_date, note)
        VALUES (?, ?, ?, ?, ?)`,
@@ -307,6 +317,15 @@ app.put("/expenses/:id", auth, async (req, res) => {
       return res
         .status(400)
         .json({ message: "category_id, amount y expense_date requeridos" });
+    }
+
+    // ✅ asegura que la categoría sea del usuario
+    const [cat] = await pool.query(
+      "SELECT id FROM categories WHERE id=? AND user_id=?",
+      [category_id, userId]
+    );
+    if (!cat.length) {
+      return res.status(400).json({ message: "Categoría inválida" });
     }
 
     const [result] = await pool.query(
